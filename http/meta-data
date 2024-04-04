@@ -1,0 +1,76 @@
+#!/bin/bash
+
+# Prepares an Arch Linux guest operating system including OpenSSH.
+
+### Create a cleanup script. ###
+echo '> Creating cleanup script ...'
+sudo cat <<EOF > /tmp/cleanup.sh
+#!/bin/bash
+# Clean the pacman cache.
+echo ">>>> cleanup.sh: Cleaning pacman cache.."
+/usr/bin/pacman -Scc --noconfirm
+
+# Write zeros to improve virtual disk compaction.
+if [[ \$WRITE_ZEROS == "true" ]]; then
+  echo ">>>> cleanup.sh: Writing zeros to improve virtual disk compaction.."
+  zerofile=\$(/usr/bin/mktemp /zerofile.XXXXX)
+  /usr/bin/dd if=/dev/zero of="\$zerofile" bs=1M
+  /usr/bin/rm -f "\$zerofile"
+  /usr/bin/sync
+fi
+
+EOF
+
+### Change script permissions for execution. ### 
+echo '> Changing script permissions for execution ...'
+sudo chmod +x /tmp/cleanup.sh
+
+### Execute the cleanup script. ### 
+echo '> Executing the cleanup script ...'
+sudo /tmp/cleanup.sh
+
+### Install and configure OpenSSH ###
+echo '> Installing and configuring OpenSSH ...'
+sudo pacman -S --noconfirm openssh
+sudo systemctl start sshd
+sudo systemctl enable sshd
+
+# If firewall exists, allow SSH
+# if sudo ufw status | grep -q 'active'; then
+#     sudo ufw allow 22/tcp
+# fi
+
+# Configure SSH
+sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+sudo systemctl restart sshd
+
+### Install and configure Docker ###
+echo '> Installing Docker ...'
+pacman -Syu --noconfirm docker
+groupadd docker
+usermod -aG docker labuser
+
+### Create user labuser with sudo permissions and SSH access ###
+echo '> Creating user labuser with sudo permissions and SSH access ...'
+sudo useradd -m -p $(openssl passwd -1 VMWare) labuser
+sudo usermod -aG wheel labuser
+
+### Set up SSH access for labuser ###
+echo '> Setting up SSH access for labuser ...'
+sudo mkdir -p /home/labuser/.ssh
+sudo chmod 700 /home/labuser/.ssh
+sudo cat <<EOF > /home/labuser/.ssh/authorized_keys
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC8/3+YtVxunoWwy1VAUKGYRIrB06OkqNnXPuYDfX1eM4Ltue004NMcqQO8SCKZcEtWVFDQwQ0e2gPKiLKDHvqApqIdL4wY+L0lx1ST8PFe7TUj9k6Z3pVRnI51WYRJr35GGH/7whMeS4UC8yy9tj0LL5u6NF5wdAid+dNiK60htEe46zs590p4lisErxFebkhM5hJ33hR57Roa4kNI1NqvzlnBeQv2akwqwAep4vg57vZpVGXqv9F7RyJp2Qi74bKRo8FqpNOvltfwrt5lyPOvd615vJpEG8CYk9cAErqNp0rKKCnKq0ELnXc5HPnygYBSGZdln254xmdgCmrltkLZp8R2l4zOEoY4i6I8D1ZqqIIobHgxPL0ZJxOc4saf/fK/EOLd0YnY87sepPhKBS05RBGoCPhtglvtL8Gc04/g5rf+5J82YXlqUVcwR8qOUyHj96toh646SUE6QLHyUW9ravGFhQoPs8e906JSu3mQVBbI7bq9VrIxz0M/T97LcP8= jcometti@Joaos-MacBook-Pro.local
+EOF
+sudo chown -R labuser:labuser /home/labuser/.ssh
+
+### Set sudo permissions ###
+echo '> Setting sudo permissions ...'
+echo 'labuser ALL=(ALL) NOPASSWD:ALL' | sudo tee -a /etc/sudoers.d/labuser > /dev/null
+
+### Set up additional configurations ###
+echo '> Setting up additional configurations ...'
+# Add PS1 line to ~/.bashrc
+echo 'PS1='\''\[\e[0;31m\]\u\[\e[m\] \[\e[1;34m\]\w\[\e[m\] \[\e[0;31m\]\$ \[\e[m\]\[\e[0;32m\] '\'' ' | sudo tee -a /home/labuser/.bashrc > /dev/null
+
+echo '> Packer Template Build -- Complete'
